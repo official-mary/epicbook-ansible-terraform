@@ -60,8 +60,8 @@
 
 - name: Create bookstore database
   shell: |
-    mysql -u root -p{{ mysql_root_password }} \
-    -S /var/run/mysqld/mysqld.sock \
+    mysql -u root -p{{ mysql_root_password }} \\
+    -S /var/run/mysqld/mysqld.sock \\
     -e "CREATE DATABASE bookstore CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
   become: yes
   when: db_exists.stdout | trim == ""
@@ -133,7 +133,31 @@
       DB_HOST=localhost
       DB_USER={{ db_user }}
       DB_PASSWORD={{ db_password }}
-      DB_NAME=bookstore
+      DB_NAME={{ db_name }}
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0640"
+
+- name: Update config.json with DB credentials
+  copy:
+    dest: "{{ app_dest }}/config/config.json"
+    content: |
+      {
+        "development": {
+          "username": "{{ db_user }}",
+          "password": "{{ db_password }}",
+          "database": "{{ db_name }}",
+          "host": "127.0.0.1",
+          "dialect": "mysql"
+        },
+        "production": {
+          "username": "{{ db_user }}",
+          "password": "{{ db_password }}",
+          "database": "{{ db_name }}",
+          "host": "127.0.0.1",
+          "dialect": "mysql"
+        }
+      }
     owner: "{{ app_user }}"
     group: "{{ app_group }}"
     mode: "0640"
@@ -150,7 +174,6 @@
     name: pm2
     global: yes
 
-#  Create pm2 home directory for www-data
 - name: Create pm2 home directory for www-data
   file:
     path: /var/www/.pm2

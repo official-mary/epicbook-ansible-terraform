@@ -1,7 +1,6 @@
 # Key Pair
-resource "aws_key_pair" "main" {
+data "aws_key_pair" "main" {
   key_name   = "${var.resource_prefix}-key"
-  public_key = file(var.ssh_public_key_path)
 }
 
 # VPC
@@ -112,7 +111,7 @@ resource "aws_instance" "main" {
   instance_type          = var.instance_type
   subnet_id              = aws_subnet.main.id
   vpc_security_group_ids = [aws_security_group.main.id]
-  key_name               = aws_key_pair.main.key_name
+  key_name               = data.aws_key_pair.main.key_name
 
   tags = {
     Name = "${var.resource_prefix}-vm"

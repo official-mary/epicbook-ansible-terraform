@@ -1,5 +1,5 @@
 variable "region" {
-  default = "us-east-1"
+  default = "eu-north-1"
 }
 
 variable "resource_prefix" {
