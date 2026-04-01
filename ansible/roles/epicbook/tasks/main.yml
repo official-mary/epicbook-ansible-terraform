@@ -1,0 +1,192 @@
+---
+- name: Create app directory
+  file:
+    path: "{{ app_dest }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Add safe directory for git
+  command: git config --global --add safe.directory {{ app_dest }}
+
+- name: Clone EpicBook repo from GitHub
+  git:
+    repo: "{{ app_repo }}"
+    dest: "{{ app_dest }}"
+    version: main
+    force: yes
+
+- name: Install Node.js and npm
+  apt:
+    name:
+      - nodejs
+      - npm
+    state: present
+
+- name: Install MySQL server and dependencies
+  apt:
+    name:
+      - mysql-server
+      - python3-mysqldb
+      - python3-pymysql
+    state: present
+
+- name: Ensure MySQL is started and enabled
+  service:
+    name: mysql
+    state: started
+    enabled: yes
+
+- name: Set MySQL root password
+  shell: |
+    if mysql -u root -p{{ mysql_root_password }} -e "SELECT 1;" 2>/dev/null; then
+      echo "Password already set correctly"
+    else
+      mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '{{ mysql_root_password }}'; FLUSH PRIVILEGES;"
+    fi
+  become: yes
+  changed_when: false
+
+- name: Check if bookstore database exists
+  command: >
+    mysql -u root -p{{ mysql_root_password }}
+    -S /var/run/mysqld/mysqld.sock
+    -e "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA
+    WHERE SCHEMA_NAME='bookstore';" --skip-column-names
+  register: db_exists
+  changed_when: false
+  become: yes
+
+- name: Create bookstore database
+  shell: |
+    mysql -u root -p{{ mysql_root_password }} \
+    -S /var/run/mysqld/mysqld.sock \
+    -e "CREATE DATABASE bookstore CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+  become: yes
+  when: db_exists.stdout | trim == ""
+
+- name: Create MySQL app user
+  mysql_user:
+    name: "{{ db_user }}"
+    password: "{{ db_password }}"
+    priv: "bookstore.*:ALL"
+    host: localhost
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+    state: present
+
+- name: Check if database is already seeded
+  command: >
+    mysql -u root -p{{ mysql_root_password }}
+    -S /var/run/mysqld/mysqld.sock
+    -e "SELECT COUNT(*) FROM information_schema.tables
+    WHERE table_schema='bookstore';" --skip-column-names
+  register: table_count
+  changed_when: false
+  become: yes
+
+- name: Run database schema
+  mysql_db:
+    name: bookstore
+    state: import
+    target: "{{ app_dest }}/db/BuyTheBook_Schema.sql"
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+  when: table_count.stdout | trim == "0"
+  become: yes
+
+- name: Run author seed
+  mysql_db:
+    name: bookstore
+    state: import
+    target: "{{ app_dest }}/db/author_seed.sql"
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+  when: table_count.stdout | trim == "0"
+  become: yes
+
+- name: Run books seed
+  mysql_db:
+    name: bookstore
+    state: import
+    target: "{{ app_dest }}/db/books_seed.sql"
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+  when: table_count.stdout | trim == "0"
+  become: yes
+
+- name: Install app dependencies
+  command: npm install
+  args:
+    chdir: "{{ app_dest }}"
+
+- name: Create .env file
+  copy:
+    dest: "{{ app_dest }}/.env"
+    content: |
+      PORT={{ app_port }}
+      DB_HOST=localhost
+      DB_USER={{ db_user }}
+      DB_PASSWORD={{ db_password }}
+      DB_NAME=bookstore
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0640"
+
+- name: Set ownership of app files
+  file:
+    path: "{{ app_dest }}"
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    recurse: yes
+
+- name: Install pm2 globally
+  npm:
+    name: pm2
+    global: yes
+
+#  Create pm2 home directory for www-data
+- name: Create pm2 home directory for www-data
+  file:
+    path: /var/www/.pm2
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0755"
+  become: yes
+
+- name: Stop existing pm2 epicbook process
+  command: pm2 delete epicbook
+  become: yes
+  become_user: "{{ app_user }}"
+  ignore_errors: yes
+  environment:
+    PM2_HOME: /var/www/.pm2
+
+- name: Start app with pm2
+  command: pm2 start server.js --name epicbook
+  args:
+    chdir: "{{ app_dest }}"
+  environment:
+    PORT: "{{ app_port }}"
+    PM2_HOME: /var/www/.pm2
+  become: yes
+  become_user: "{{ app_user }}"
+
+- name: Save pm2 process list
+  command: pm2 save
+  become: yes
+  become_user: "{{ app_user }}"
+  environment:
+    PM2_HOME: /var/www/.pm2
+
+- name: Configure pm2 to start on boot
+  command: pm2 startup systemd -u {{ app_user }} --hp /var/www/.pm2
+  become: yes
+  environment:
+    PM2_HOME: /var/www/.pm2
