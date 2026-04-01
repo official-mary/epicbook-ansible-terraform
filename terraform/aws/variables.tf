@@ -17,3 +17,16 @@ variable "admin_username" {
 variable "ssh_public_key_path" {
   default = "~/.ssh/id_rsa_mini_finance.pub"
 }
+
+variable "db_name" {
+  default = "bookstore"
+}
+
+variable "db_user" {
+  default = "epicbook_user"
+}
+
+variable "db_password" {
+  description = "RDS database password"
+  sensitive   = true
+}

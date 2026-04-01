@@ -24,113 +24,54 @@
       - npm
     state: present
 
-- name: Install MySQL server and dependencies
+- name: Install MySQL client and Python dependencies
   apt:
     name:
-      - mysql-server
+      - mysql-client
       - python3-mysqldb
       - python3-pymysql
     state: present
 
-- name: Ensure MySQL is started and enabled
-  service:
-    name: mysql
-    state: started
-    enabled: yes
-
-- name: Set MySQL root password
-  shell: |
-    if mysql -u root -p{{ mysql_root_password }} -e "SELECT 1;" 2>/dev/null; then
-      echo "Password already set correctly"
-    else
-      mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '{{ mysql_root_password }}'; FLUSH PRIVILEGES;"
-    fi
-  become: yes
-  changed_when: false
-
-- name: Check if bookstore database exists
-  command: >
-    mysql -u root -p{{ mysql_root_password }}
-    -S /var/run/mysqld/mysqld.sock
-    -e "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA
-    WHERE SCHEMA_NAME='bookstore';" --skip-column-names
-  register: db_exists
-  changed_when: false
-  become: yes
-
-- name: Create bookstore database
-  shell: |
-    mysql -u root -p{{ mysql_root_password }} \\
-    -S /var/run/mysqld/mysqld.sock \\
-    -e "CREATE DATABASE bookstore CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-  become: yes
-  when: db_exists.stdout | trim == ""
-
-- name: Create MySQL app user
-  mysql_user:
-    name: "{{ db_user }}"
-    password: "{{ db_password }}"
-    priv: "bookstore.*:ALL"
-    host: localhost
-    login_user: root
-    login_password: "{{ mysql_root_password }}"
-    login_unix_socket: /var/run/mysqld/mysqld.sock
-    state: present
-
 - name: Check if database is already seeded
   command: >
-    mysql -u root -p{{ mysql_root_password }}
-    -S /var/run/mysqld/mysqld.sock
+    mysql -h {{ db_host }} -u {{ db_user }} -p'{{ db_password }}'
     -e "SELECT COUNT(*) FROM information_schema.tables
-    WHERE table_schema='bookstore';" --skip-column-names
+    WHERE table_schema='{{ db_name }}';" --skip-column-names
   register: table_count
   changed_when: false
-  become: yes
+  ignore_errors: yes
 
 - name: Run database schema
-  mysql_db:
-    name: bookstore
-    state: import
-    target: "{{ app_dest }}/db/BuyTheBook_Schema.sql"
-    login_user: root
-    login_password: "{{ mysql_root_password }}"
-    login_unix_socket: /var/run/mysqld/mysqld.sock
-  when: table_count.stdout | trim == "0"
+  shell: >
+    mysql -h {{ db_host }} -u {{ db_user }} -p'{{ db_password }}'
+    {{ db_name }} < {{ app_dest }}/db/BuyTheBook_Schema.sql
+  when: table_count.stdout | trim == "0" or table_count.failed
   become: yes
 
 - name: Run author seed
-  mysql_db:
-    name: bookstore
-    state: import
-    target: "{{ app_dest }}/db/author_seed.sql"
-    login_user: root
-    login_password: "{{ mysql_root_password }}"
-    login_unix_socket: /var/run/mysqld/mysqld.sock
-  when: table_count.stdout | trim == "0"
+  shell: >
+    mysql -h {{ db_host }} -u {{ db_user }} -p'{{ db_password }}'
+    {{ db_name }} < {{ app_dest }}/db/author_seed.sql
+  when: table_count.stdout | trim == "0" or table_count.failed
   become: yes
 
 - name: Run books seed
-  mysql_db:
-    name: bookstore
-    state: import
-    target: "{{ app_dest }}/db/books_seed.sql"
-    login_user: root
-    login_password: "{{ mysql_root_password }}"
-    login_unix_socket: /var/run/mysqld/mysqld.sock
-  when: table_count.stdout | trim == "0"
+  shell: >
+    mysql -h {{ db_host }} -u {{ db_user }} -p'{{ db_password }}'
+    {{ db_name }} < {{ app_dest }}/db/books_seed.sql
+  when: table_count.stdout | trim == "0" or table_count.failed
   become: yes
 
 - name: Install app dependencies
-  command: npm install
-  args:
-    chdir: "{{ app_dest }}"
+  npm:
+    path: "{{ app_dest }}"
 
 - name: Create .env file
   copy:
     dest: "{{ app_dest }}/.env"
     content: |
       PORT={{ app_port }}
-      DB_HOST=localhost
+      DB_HOST={{ db_host }}
       DB_USER={{ db_user }}
       DB_PASSWORD={{ db_password }}
       DB_NAME={{ db_name }}
@@ -147,14 +88,14 @@
           "username": "{{ db_user }}",
           "password": "{{ db_password }}",
           "database": "{{ db_name }}",
-          "host": "127.0.0.1",
+          "host": "{{ db_host }}",
           "dialect": "mysql"
         },
         "production": {
           "username": "{{ db_user }}",
           "password": "{{ db_password }}",
           "database": "{{ db_name }}",
-          "host": "127.0.0.1",
+          "host": "{{ db_host }}",
           "dialect": "mysql"
         }
       }
@@ -174,7 +115,7 @@
     name: pm2
     global: yes
 
-- name: Create pm2 home directory for www-data
+- name: Create pm2 home directory for user
   file:
     path: /var/www/.pm2
     state: directory

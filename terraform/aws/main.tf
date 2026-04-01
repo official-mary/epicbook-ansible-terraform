@@ -1,6 +1,6 @@
 # Key Pair
 data "aws_key_pair" "main" {
-  key_name   = "${var.resource_prefix}-key"
+  key_name = "${var.resource_prefix}-key"
 }
 
 # VPC
@@ -23,7 +23,7 @@ resource "aws_internet_gateway" "main" {
   }
 }
 
-# Public Subnet
+# Public Subnet (for EC2)
 resource "aws_subnet" "main" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
@@ -32,6 +32,17 @@ resource "aws_subnet" "main" {
 
   tags = {
     Name = "${var.resource_prefix}-subnet"
+  }
+}
+
+# Second Subnet for RDS (different AZ required)
+resource "aws_subnet" "db" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.2.0/24"
+  availability_zone = "${var.region}b"
+
+  tags = {
+    Name = "${var.resource_prefix}-db-subnet"
   }
 }
 
@@ -55,7 +66,7 @@ resource "aws_route_table_association" "main" {
   route_table_id = aws_route_table.main.id
 }
 
-# Security Group
+# Security Group for EC2
 resource "aws_security_group" "main" {
   name        = "${var.resource_prefix}-sg"
   description = "Allow SSH and HTTP"
@@ -66,7 +77,7 @@ resource "aws_security_group" "main" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # Consider narrowing this to your IP for security
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
@@ -86,6 +97,32 @@ resource "aws_security_group" "main" {
 
   tags = {
     Name = "${var.resource_prefix}-sg"
+  }
+}
+
+# Security Group for RDS (only accepts connections from EC2)
+resource "aws_security_group" "db" {
+  name        = "${var.resource_prefix}-db-sg"
+  description = "Allow MySQL from EC2 only"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "MySQL from EC2"
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "tcp"
+    security_groups = [aws_security_group.main.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.resource_prefix}-db-sg"
   }
 }
 
@@ -127,6 +164,40 @@ resource "aws_eip" "main" {
   }
 }
 
+# DB Subnet Group (RDS requires at least 2 subnets in different AZs)
+resource "aws_db_subnet_group" "main" {
+  name       = "${var.resource_prefix}-db-subnet-group"
+  subnet_ids = [aws_subnet.main.id, aws_subnet.db.id]
+
+  tags = {
+    Name = "${var.resource_prefix}-db-subnet-group"
+  }
+}
+
+# RDS MySQL Instance
+resource "aws_db_instance" "main" {
+  identifier        = "${var.resource_prefix}-db"
+  engine            = "mysql"
+  engine_version    = "8.0"
+  instance_class    = "db.t3.micro"
+  allocated_storage = 20
+  storage_type      = "gp2"
+
+  db_name  = var.db_name
+  username = var.db_user
+  password = var.db_password
+
+  db_subnet_group_name   = aws_db_subnet_group.main.name
+  vpc_security_group_ids = [aws_security_group.db.id]
+
+  skip_final_snapshot = true
+  publicly_accessible = false
+
+  tags = {
+    Name = "${var.resource_prefix}-db"
+  }
+}
+
 # Ansible Inventory Generation
 resource "local_file" "ansible_inventory" {
   content = <<EOT
@@ -137,6 +208,7 @@ ${aws_eip.main.public_ip}
 ansible_user=${var.admin_username}
 ansible_ssh_private_key_file=${replace(var.ssh_public_key_path, ".pub", "")}
 ansible_python_interpreter=/usr/bin/python3
+db_host=${aws_db_instance.main.address}
 EOT
 
   filename = "../../ansible/inventory.ini"

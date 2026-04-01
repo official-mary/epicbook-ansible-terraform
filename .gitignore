@@ -34,3 +34,4 @@ terraform/aws/terraform.tfstate
 terraform/aws/terraform.tfstate.backup
 terraform/aws/terraform-provider-aws*
 terraform/aws/*.zip
+terraform/aws/terraform.tfars
