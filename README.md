@@ -1,9 +1,46 @@
-# The EpicBook 
+# The EpicBook Infrastructure & Deployment
+This repository contains the full Infrastructure as Code (IaC) and Configuration Management to deploy the EpicBook application on AWS using Terraform and Ansible.
 
-A Node.js bookstore web application deployed on AWS using Terraform for infrastructure provisioning and Ansible for configuration management.
 
-## Live Demo
-http://13.216.109.153
+---
+Epicbook is A Node.js bookstore web application deployed on AWS using Terraform for infrastructure provisioning and Ansible for configuration management.
+
+The project is split into two main phases:
+
+Terraform (Provisioning): Creates the VPC, EC2 instance (Web Server), and RDS instance (MySQL Database). It automatically generates the ansible/inventory.ini file using template outputs.
+
+Ansible (Configuration): Configures the EC2 instance, installs Nginx, clones the app, and connects it to the RDS database using encrypted secrets.
+
+---
+ Components
+1. Terraform (Infrastructure)
+Located in terraform/aws/.
+
+Dynamic Inventory: Terraform uses a local_file resource to inject the EC2 Public IP and the RDS Endpoint directly into ansible/inventory.ini.
+
+Security: Passwords are managed via terraform.tfvars (ignored by Git).
+
+2. Ansible (Deployment)
+Located in ansible/.
+The deployment is managed by site.yml which executes three main stages:
+
+Common: System updates and basic dependencies.
+
+Nginx: Reverses proxy setup to serve the Node.js app on port 80.
+
+EpicBook: Clones the repo, installs npm packages, and seeds the RDS database.
+
+---
+ Security & Secrets
+I use Ansible Vault to protect sensitive data.
+
+Vault File: ansible/group_vars/web/vault.yml (Encrypted).
+
+Password File: .vault_pass (Local only, ignored by Git).
+
+Note: The database password must be alphanumeric. Special characters like @ are restricted to ensure compatibility with AWS RDS CLI parameters.
+A .vault_pass file in the root directory.
+
 
 ---
 
@@ -62,25 +99,27 @@ epicbook-prod/
 
 ### 1. Clone the repo
 ```bash
-git clone https://github.com/pravinmishraaws/theepicbook.git
-cd epicbook-prod
+git clone my repo
+cd epicbook-ansible-terraform
+cd terraform/aws
 ```
 
 ### 2. Provision Infrastructure with Terraform
 ```bash
-cd terraform
 terraform init
 terraform plan
 terraform apply
 ```
-Note the output EC2 public IP address.
+Note the output EC2 public IP address
+And rds endpoint.(Though it will be automatically injected into the inventory.ini)
 
 ### 3. Set up Ansible inventory
 ```bash
 cd ../ansible
 cp inventory.ini.example inventory.ini
 ```
-Edit `inventory.ini` and fill in your server IP and SSH key path:
+Edit `inventory.ini` and fill in your server IP and SSH key path: (This is done automatically)
+
 ```ini
 [web]
 <YOUR_EC2_IP>
